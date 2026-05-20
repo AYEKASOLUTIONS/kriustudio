@@ -806,13 +806,102 @@ let tickets=[], shoots=[], inventory=[], notifs=[];
 let aiMsgs=[], aiTyping=false, aiSessionStart=false;
 
 // ══ STORAGE ════════════════════════════════════════
-const SK='or_studio_v3';
-async function loadData(){
-  try{const r=await window.storage.get(SK);if(r&&r.value){const d=JSON.parse(r.value);tickets=d.tickets||[];shoots=d.shoots||[];inventory=d.inventory||[];notifs=d.notifs||[];if(d.proyectos&&d.proyectos.length)PROYECTOS=d.proyectos;}}catch(e){}
-  if(!tickets.length&&!shoots.length&&!inventory.length) seed();
+// ══ SUPABASE CONFIG ════════════════════════════════════════
+const SB_URL='https://vfhfnsjlvdkamqjjguop.supabase.co';
+const SB_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZmaGZuc2psdmRrYW1xampndW9wIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkzMDM4OTYsImV4cCI6MjA5NDg3OTg5Nn0.fo7CUgcapgFFnFXnbXL-J4EOvsx2d71_N8BhTKh9Cjs';
+const SB_HEADERS={'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY,'Prefer':'return=representation'};
+
+async function sbGet(table, query=''){
+  try{
+    const r=await fetch(SB_URL+'/rest/v1/'+table+'?'+query,{headers:SB_HEADERS});
+    if(!r.ok) return null;
+    return await r.json();
+  }catch(e){return null;}
 }
+async function sbPost(table, data){
+  try{
+    const r=await fetch(SB_URL+'/rest/v1/'+table,{method:'POST',headers:SB_HEADERS,body:JSON.stringify(data)});
+    if(!r.ok){console.error('sbPost error',await r.text());return null;}
+    return await r.json();
+  }catch(e){return null;}
+}
+async function sbPatch(table, id, data){
+  try{
+    const r=await fetch(SB_URL+'/rest/v1/'+table+'?id=eq.'+id,{method:'PATCH',headers:{...SB_HEADERS,'Prefer':'return=minimal'},body:JSON.stringify(data)});
+    return r.ok;
+  }catch(e){return false;}
+}
+async function sbDelete(table, id){
+  try{
+    const r=await fetch(SB_URL+'/rest/v1/'+table+'?id=eq.'+id,{method:'DELETE',headers:SB_HEADERS});
+    return r.ok;
+  }catch(e){return false;}
+}
+async function sbUpsert(table, data){
+  try{
+    const r=await fetch(SB_URL+'/rest/v1/'+table,{method:'POST',headers:{...SB_HEADERS,'Prefer':'resolution=merge-duplicates,return=minimal'},body:JSON.stringify(data)});
+    return r.ok;
+  }catch(e){return false;}
+}
+
+// ── DATA LAYER ─────────────────────────────────────────────
+async function loadData(){
+  try{
+    const [t,s,inv,n,p]=await Promise.all([
+      sbGet('kriu_tickets','order=created_at.desc'),
+      sbGet('kriu_shoots','order=created_at.desc'),
+      sbGet('kriu_inventory','order=created_at.desc'),
+      sbGet('kriu_notifs','order=created_at.desc&limit=50'),
+      sbGet('kriu_proyectos','order=sort_order.asc'),
+    ]);
+    if(t&&t.length) tickets=t.map(parseTicket);
+    if(s&&s.length) shoots=s.map(parseShoot);
+    if(inv&&inv.length) inventory=inv.map(parseInv);
+    if(n&&n.length) notifs=n.map(parseNotif);
+    if(p&&p.length) PROYECTOS=p.map(parseProyecto);
+    if(!tickets.length&&!shoots.length&&!inventory.length) seed();
+  }catch(e){
+    console.error('loadData error',e);
+    seed();
+  }
+}
+
+// Parsers: Supabase rows → app objects
+function parseTicket(r){return{id:r.id,title:r.title,desc:r.descripcion||'',assignee:r.assignee,tipo:r.tipo,prio:r.prio,due:r.due,imp:r.imp||5,notes:r.notes||'',proyecto:r.proyecto||'',categoria:r.categoria||'',status:r.status,progress:r.progress||0,created:new Date(r.created_at).getTime(),entregables:r.entregables||[],history:r.history||[]};}
+function parseShoot(r){return{id:r.id,title:r.title,desc:r.descripcion||'',date:r.date,time:r.time||'',location:r.location||'',meetPoint:r.meet_point||'',notes:r.notes||'',proyecto:r.proyecto||'',categoria:r.categoria||'',status:r.status,crew:r.crew||[],created:new Date(r.created_at).getTime(),history:r.history||[]};}
+function parseInv(r){return{id:r.id,name:r.name,cat:r.cat,serial:r.serial||'',notes:r.notes||'',status:r.status,loans:r.loans||[],created:new Date(r.created_at).getTime()};}
+function parseNotif(r){return{id:r.id,for:r.for_users||[],type:r.type,msg:r.msg,sub:r.sub||'',time:new Date(r.created_at).getTime(),read:r.read_by||[],icon:r.icon||'ti-bell'};}
+function parseProyecto(r){return{id:r.id,nombre:r.nombre,icon:r.icon,color:r.color,bg:r.bg,desc:r.descripcion||'',categorias:r.categorias||[]};}
+
 async function saveData(){
-  try{await window.storage.set(SK,JSON.stringify({tickets,shoots,inventory,notifs,proyectos:PROYECTOS}));}catch(e){}
+  // Lightweight: called after changes, upserts affected records
+  // Full saves are done by specific save functions below
+}
+
+// ── SPECIFIC SAVE FUNCTIONS ─────────────────────────────────
+async function saveTicket(t){
+  const row={id:t.id,title:t.title,descripcion:t.desc,assignee:t.assignee,tipo:t.tipo,prio:t.prio,due:t.due||null,imp:t.imp,notes:t.notes,proyecto:t.proyecto||null,categoria:t.categoria||null,status:t.status,progress:t.progress,entregables:t.entregables||[],history:t.history};
+  await sbUpsert('kriu_tickets',row);
+}
+async function saveShoot(s){
+  const row={id:s.id,title:s.title,descripcion:s.desc,date:s.date,time:s.time||null,location:s.location,meet_point:s.meetPoint||null,notes:s.notes,proyecto:s.proyecto||null,categoria:s.categoria||null,status:s.status,crew:s.crew,history:s.history};
+  await sbUpsert('kriu_shoots',row);
+}
+async function saveInvItem(item){
+  const row={id:item.id,name:item.name,cat:item.cat,serial:item.serial||null,notes:item.notes||null,status:item.status,loans:item.loans};
+  await sbUpsert('kriu_inventory',row);
+}
+async function saveNotif(n){
+  const row={id:n.id,for_users:n.for,type:n.type,msg:n.msg,sub:n.sub||null,read_by:n.read,icon:n.icon||'ti-bell'};
+  await sbUpsert('kriu_notifs',row);
+}
+async function saveProyecto(p){
+  const idx=PROYECTOS.indexOf(p);
+  const row={id:p.id,nombre:p.nombre,icon:p.icon,color:p.color,bg:p.bg,descripcion:p.desc||'',categorias:p.categorias,sort_order:idx>=0?idx:99};
+  await sbUpsert('kriu_proyectos',row);
+}
+async function deleteProyecto(pid){
+  await sbDelete('kriu_proyectos',pid);
 }
 
 function seed(){
@@ -869,7 +958,7 @@ function editorInitials(name){const e=EDITORS.find(x=>x.name===name);return e?e.
 
 // ══ NOTIFICACIONES ════════════════════════════════════════
 function pushNotif(n,showPopup=false){
-  notifs.unshift(n);saveData();renderBell();renderNotifItems();
+  notifs.unshift(n);saveNotif(n);renderBell();renderNotifItems();
   if(showPopup&&cu&&n.for.includes(cu.id)) showAlertPopup(n);
 }
 
@@ -931,8 +1020,8 @@ function renderNotifItems(){
     </div>`;
   }).join('');
 }
-function readNotif(id){const n=notifs.find(x=>x.id===id);if(n&&cu&&!n.read.includes(cu.id))n.read.push(cu.id);saveData();renderBell();renderNotifItems();}
-function markAllRead(){if(!cu)return;notifs.forEach(n=>{if(n.for.includes(cu.id)&&!n.read.includes(cu.id))n.read.push(cu.id);});saveData();renderBell();renderNotifItems();}
+function readNotif(id){const n=notifs.find(x=>x.id===id);if(n&&cu&&!n.read.includes(cu.id))n.read.push(cu.id);saveNotif(n);renderBell();renderNotifItems();}
+function markAllRead(){if(!cu)return;notifs.forEach(n=>{if(n.for.includes(cu.id)&&!n.read.includes(cu.id)){n.read.push(cu.id);saveNotif(n);}});renderBell();renderNotifItems();}
 function openNotif(){document.getElementById('notif-panel').classList.add('open');document.getElementById('notif-overlay').classList.add('open');renderNotifItems();}
 function closeNotif(){document.getElementById('notif-panel').classList.remove('open');document.getElementById('notif-overlay').classList.remove('open');}
 
@@ -1836,7 +1925,7 @@ function confirmDeleteProyecto(pid){
   if(tCount>0) msg+='\n\n⚠️ Tiene '+tCount+' ticket'+(tCount!==1?'s':'')+' asociado'+(tCount!==1?'s':'')+'. Los tickets no se eliminarán pero quedarán sin proyecto.';
   if(confirm(msg)){
     PROYECTOS=PROYECTOS.filter(function(x){return x.id!==pid;});
-    saveData();
+    deleteProyecto(pid);
     if(view===pid) sv('proyectos');
     else{renderSidebar();renderView();}
     showToast('Proyecto eliminado');
@@ -2444,15 +2533,15 @@ function openTicketDetail(id){
 function dt(n){[0,1,2,3].forEach(i=>{const p=document.getElementById('dp'+i);if(p)p.classList.toggle('hidden',i!==n);const tb=document.getElementById('det-tabs');if(tb&&tb.children[i])tb.children[i].classList.toggle('active',i===n);});}
 function upSlider(v){const pb=document.querySelector('.prog-big');if(pb)pb.textContent=v+'%';document.querySelectorAll('.sstep').forEach((b,i)=>b.classList.toggle('active',parseInt(v)===[0,25,50,75,100][i]));}
 function sp(v){const sl=document.getElementById('pslider');if(sl){sl.value=v;upSlider(v);}}
-function acceptT(){const t=selItem.data;t.status='aceptado';t.history.push({t:Date.now(),m:t.assignee+' aceptó la tarea · '+new Date().toLocaleString('es-MX',{weekday:'short',day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit',second:'2-digit'})});saveData();cm('m-detail');renderView();renderSidebar();showToast('Tarea aceptada');}
-function rejectT(){const t=selItem.data;t.history.push({t:Date.now(),m:cu.name+' no puede tomar la tarea · '+new Date().toLocaleString('es-MX',{weekday:'short',day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit',second:'2-digit'})});saveData();cm('m-detail');renderView();}
-function approveT(){const t=selItem.data;t.status='completado';t.history.push({t:Date.now(),m:cu.name+' aprobó — completado ✓ · '+new Date().toLocaleString('es-MX',{weekday:'short',day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit',second:'2-digit'})});saveData();cm('m-detail');renderView();renderSidebar();showToast('Tarea completada ✓');}
-function sendBackT(){const t=selItem.data;t.status='en-progreso';t.history.push({t:Date.now(),m:'Regresado al editor para ajustes'});saveData();cm('m-detail');renderView();}
+function acceptT(){const t=selItem.data;t.status='aceptado';t.history.push({t:Date.now(),m:t.assignee+' aceptó la tarea · '+new Date().toLocaleString('es-MX',{weekday:'short',day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit',second:'2-digit'})});saveTicket(selItem.data);cm('m-detail');renderView();renderSidebar();showToast('Tarea aceptada');}
+function rejectT(){const t=selItem.data;t.history.push({t:Date.now(),m:cu.name+' no puede tomar la tarea · '+new Date().toLocaleString('es-MX',{weekday:'short',day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit',second:'2-digit'})});if(selItem&&selItem.data&&selItem.type==='ticket')saveTicket(selItem.data);cm('m-detail');renderView();}
+function approveT(){const t=selItem.data;t.status='completado';t.history.push({t:Date.now(),m:cu.name+' aprobó — completado ✓ · '+new Date().toLocaleString('es-MX',{weekday:'short',day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit',second:'2-digit'})});if(selItem&&selItem.data&&selItem.type==='ticket')saveTicket(selItem.data);cm('m-detail');renderView();renderSidebar();showToast('Tarea completada ✓');}
+function sendBackT(){const t=selItem.data;t.status='en-progreso';t.history.push({t:Date.now(),m:'Regresado al editor para ajustes'});if(selItem&&selItem.data&&selItem.type==='ticket')saveTicket(selItem.data);cm('m-detail');renderView();}
 function saveProg(){
   const t=selItem.data;const v=parseInt(document.getElementById('pslider').value);const note=(document.getElementById('prog-note')||{}).value||'';
   t.progress=v;if(v===100)t.status='revision';else if(v>0)t.status='en-progreso';
   t.history.push({t:Date.now(),m:`Progreso a ${v}%${note?' — "'+note.trim()+'"':''}`});
-  saveData();renderView();openTicketDetail(t.id);showToast('Progreso guardado');
+  saveTicket(t);renderView();openTicketDetail(t.id);showToast('Progreso guardado');
 }
 
 
@@ -2539,7 +2628,7 @@ function saveEntregable(tipo){
   t.entregables.push(newDel);
   var histMsg=tipo==='entregable'?cu.name+' subió entregable: "'+titulo.trim()+'"':cu.name+' agregó referencia: "'+titulo.trim()+'"';
   t.history.push({t:Date.now(),m:histMsg+' · '+new Date().toLocaleString('es-MX',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})});
-  saveData();
+  saveTicket(t);
   showToast(tipo==='entregable'?'Entregable subido ✓':'Referencia agregada ✓');
   // Refresh the panel
   openTicketDetail(t.id);
@@ -2590,7 +2679,7 @@ function openShootDetail(id){
   dt(0);om('m-detail');
 }
 
-function setShootSt(st){const s=selItem.data;s.status=st;const l={confirmado:'Shoot confirmado ✓','en-curso':'Shoot iniciado 🎬','completados':'Shoot completado ✓'};s.history.push({t:Date.now(),m:l[st]||st});saveData();renderView();cm('m-detail');}
+function setShootSt(st){const s=selItem.data;s.status=st;const l={confirmado:'Shoot confirmado ✓','en-curso':'Shoot iniciado 🎬','completados':'Shoot completado ✓'};s.history.push({t:Date.now(),m:l[st]||st});saveShoot(s);renderView();cm('m-detail');}
 
 // ── INVENTARIO DETAIL ──────────────────────────────────────
 function openInvDetail(id){
@@ -2643,15 +2732,15 @@ function checkOut(){
   const note=(document.getElementById('loan-note')||{}).value||'';
   item.status='en-uso';item.loans.push({user:cu.name,out:Date.now(),note:note.trim(),returned:null});
   pushNotif({id:'n'+Date.now(),for:['oscar','pm'],type:'salida',msg:`${cu.name} tomó ${item.name}`,sub:`${note?'Motivo: '+note:'Sin motivo'} · ${new Date().toLocaleTimeString('es-MX',{hour:'2-digit',minute:'2-digit'})}`,time:Date.now(),read:[],icon:'ti-package'});
-  saveData();showToast(`Salida registrada — ${item.name}`);openInvDetail(item.id);renderView();renderSidebar();
+  saveInvItem(item);showToast(`Salida registrada — ${item.name}`);openInvDetail(item.id);renderView();renderSidebar();
 }
 function checkIn(){
   const item=selItem.data;const loan=item.loans.find(l=>!l.returned);if(!loan)return;
   loan.returned=Date.now();item.status='disponible';
   pushNotif({id:'n'+Date.now(),for:['oscar','pm'],type:'regreso',msg:`${loan.user} regresó ${item.name}`,sub:`Regresado a las ${new Date().toLocaleTimeString('es-MX',{hour:'2-digit',minute:'2-digit'})}`,time:Date.now(),read:[],icon:'ti-package'});
-  saveData();showToast(`Regreso registrado — ${item.name}`);openInvDetail(item.id);renderView();renderSidebar();
+  saveInvItem(item);showToast(`Regreso registrado — ${item.name}`);openInvDetail(item.id);renderView();renderSidebar();
 }
-function setInvSt(st){selItem.data.status=st;saveData();openInvDetail(selItem.data.id);renderView();showToast(st==='disponible'?'Marcado como disponible':'Enviado a mantenimiento',st==='disponible');}
+function setInvSt(st){selItem.data.status=st;saveInvItem(selItem.data);openInvDetail(selItem.data.id);renderView();showToast(st==='disponible'?'Marcado como disponible':'Enviado a mantenimiento',st==='disponible');}
 
 // ── CREATE HELPERS ──────────────────────────────────────
 function createTicket(){
@@ -2673,7 +2762,7 @@ function createTicket(){
   const dueLabel=due?` · Entrega: ${new Date(due+'T12:00:00').toLocaleDateString('es-MX',{day:'numeric',month:'short',year:'numeric'})}`:' · Sin fecha';
   if(refsAsEntregables.length) tickets[0].entregables=refsAsEntregables;
   pushNotif({id:'n'+Date.now(),for:[assignee,'oscar','pm'],type:'ticket',msg:`Nueva tarea: ${title}`,sub:`Prioridad ${prioLabel} · Tipo: ${tipo}${dueLabel}`,time:Date.now(),read:[cu.id],icon:'🎫'},true);
-  saveData();cm('m-ticket');['ft-title','ft-desc','ft-due','ft-notes'].forEach(i=>{const el=document.getElementById(i);if(el)el.value='';});document.getElementById('ft-assignee').value='';resetTicketForm();renderView();renderSidebar();showToast('Ticket creado y enviado');
+  cm('m-ticket');['ft-title','ft-desc','ft-due','ft-notes'].forEach(i=>{const el=document.getElementById(i);if(el)el.value='';});document.getElementById('ft-assignee').value='';resetTicketForm();renderView();renderSidebar();showToast('Ticket creado y enviado');
 }
 
 function prepShoot(){
@@ -2705,8 +2794,10 @@ function createShoot(){
 function createInvItem(){
   const name=document.getElementById('fi-name').value.trim();if(!name){showToast('Agrega el nombre',false);return;}
   const id='INV-'+String(inventory.length+1).padStart(3,'0');
-  inventory.push({id,name,cat:document.getElementById('fi-cat').value,serial:document.getElementById('fi-serial').value.trim(),notes:document.getElementById('fi-notes').value.trim(),status:'disponible',loans:[],created:Date.now()});
-  saveData();cm('m-inv');['fi-name','fi-serial','fi-notes'].forEach(i=>{const el=document.getElementById(i);if(el)el.value='';});renderView();showToast('Equipo agregado');
+  const newItem={id,name,cat:document.getElementById('fi-cat').value,serial:document.getElementById('fi-serial').value.trim(),notes:document.getElementById('fi-notes').value.trim(),status:'disponible',loans:[],created:Date.now()};
+  inventory.push(newItem);
+  saveInvItem(newItem);
+  cm('m-inv');['fi-name','fi-serial','fi-notes'].forEach(i=>{const el=document.getElementById(i);if(el)el.value='';});renderView();showToast('Equipo agregado');
 }
 
 
