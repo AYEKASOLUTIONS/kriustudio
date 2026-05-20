@@ -7,6 +7,7 @@
 <meta name="apple-mobile-web-app-title" content="Kriu"/>
 <title>Kriu</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/dist/tabler-icons.min.css"/>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <style>
 
 
@@ -876,7 +877,7 @@ textarea.finput{resize:vertical;min-height:80px;line-height:1.6}
 
 
 // ══ DATA ════════════════════════════════════════
-const EDITORS=[
+let EDITORS=[
   {name:'Carlos M.',role:'Editor de Video',color:'#4a9eff',bg:'rgba(74,158,255,.15)',initials:'CM',authType:'pin',credential:'1234'},
   {name:'Sofía R.',role:'Diseñadora',color:'#c084fc',bg:'rgba(192,132,252,.15)',initials:'SR',authType:'pin',credential:'1234'},
   {name:'Diego L.',role:'Community Manager',color:'#4ade80',bg:'rgba(74,222,128,.12)',initials:'DL',authType:'pin',credential:'1234'},
@@ -884,11 +885,11 @@ const EDITORS=[
   {name:'Javier T.',role:'Editor de Video',color:'#2dd4bf',bg:'rgba(45,212,191,.12)',initials:'JT',authType:'pin',credential:'1234'},
   {name:'Valeria G.',role:'Diseñadora',color:'#f472b6',bg:'rgba(244,114,182,.12)',initials:'VG',authType:'pin',credential:'1234'},
 ];
-const SPECIAL=[
+let SPECIAL=[
   {id:'oscar',name:'Oscar Roa',role:'Director / Owner',initials:'OR',color:'#c9a84c',bg:'rgba(201,168,76,.2)',access:'owner',authType:'password',credential:'oscar2024'},
   {id:'pm',name:'Project Manager',role:'Gestión de equipo',initials:'PM',color:'#4a9eff',bg:'rgba(74,158,255,.15)',access:'pm',authType:'password',credential:'kriu2024'},
 ];
-const ALL_PROFILES=[...SPECIAL,...EDITORS.map(e=>({...e,id:e.name,access:'editor'}))];
+let ALL_PROFILES=[...SPECIAL,...EDITORS.map(e=>({...e,id:e.name,access:'editor'}))];
 const SHOOT_ROLES=['Director','Camarógrafo','Fotógrafo','Asistente de cámara','Gaffer','Audio','PA','Coordinación','Otro'];
 const CAT_ICONS={Cámara:'ti-camera',Lente:'ti-zoom-in',Audio:'ti-microphone',Iluminación:'ti-bulb',Grúa:'ti-arrows-move',Accesorios:'ti-tool',Digital:'ti-device-laptop',Otro:'ti-package'};
 
@@ -941,39 +942,53 @@ let aiMsgs=[], aiTyping=false, aiSessionStart=false;
 // ══ STORAGE ════════════════════════════════════════
 // ══ SUPABASE CONFIG ════════════════════════════════════════
 const SB_URL='https://vfhfnsjlvdkamqjjguop.supabase.co';
-const SB_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZmaGZuc2psdmRrYW1xampndW9wIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkzMDM4OTYsImV4cCI6MjA5NDg3OTg5Nn0.fo7CUgcapgFFnFXnbXL-J4EOvsx2d71_N8BhTKh9Cjs';
-const SB_HEADERS={'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY,'Prefer':'return=representation'};
+const SB_KEY='sb_publishable_DExPYmxFRBYxfxjyrZTOFQ_qEflcnp3';
+const sb=supabase.createClient(SB_URL,SB_KEY);
 
 async function sbGet(table, query=''){
   try{
-    const r=await fetch(SB_URL+'/rest/v1/'+table+'?'+query,{headers:SB_HEADERS});
-    if(!r.ok) return null;
-    return await r.json();
-  }catch(e){return null;}
+    var q=sb.from(table).select('*');
+    // Parse simple query params
+    var params=new URLSearchParams(query);
+    params.forEach(function(val,key){
+      if(key==='order'){
+        var parts=val.split('.');
+        q=q.order(parts[0],{ascending:parts[1]!=='desc'});
+      } else if(key==='limit'){
+        q=q.limit(parseInt(val));
+      }
+    });
+    var res=await q;
+    if(res.error){console.error('sbGet error',res.error);return null;}
+    return res.data;
+  }catch(e){console.error('sbGet catch',e);return null;}
 }
 async function sbPost(table, data){
   try{
-    const r=await fetch(SB_URL+'/rest/v1/'+table,{method:'POST',headers:SB_HEADERS,body:JSON.stringify(data)});
-    if(!r.ok){console.error('sbPost error',await r.text());return null;}
-    return await r.json();
-  }catch(e){return null;}
+    var res=await sb.from(table).insert(data).select();
+    if(res.error){console.error('sbPost error',res.error);return null;}
+    return res.data;
+  }catch(e){console.error('sbPost catch',e);return null;}
 }
 async function sbPatch(table, id, data){
   try{
-    const r=await fetch(SB_URL+'/rest/v1/'+table+'?id=eq.'+id,{method:'PATCH',headers:{...SB_HEADERS,'Prefer':'return=minimal'},body:JSON.stringify(data)});
-    return r.ok;
-  }catch(e){return false;}
+    var res=await sb.from(table).update(data).eq('id',String(id));
+    if(res.error){console.error('sbPatch error on '+table+':',res.error.message);return false;}
+    return true;
+  }catch(e){console.error('sbPatch catch:',e);return false;}
 }
 async function sbDelete(table, id){
   try{
-    const r=await fetch(SB_URL+'/rest/v1/'+table+'?id=eq.'+id,{method:'DELETE',headers:SB_HEADERS});
-    return r.ok;
+    var res=await sb.from(table).delete().eq('id',id);
+    if(res.error){console.error('sbDelete error',res.error);return false;}
+    return true;
   }catch(e){return false;}
 }
 async function sbUpsert(table, data){
   try{
-    const r=await fetch(SB_URL+'/rest/v1/'+table,{method:'POST',headers:{...SB_HEADERS,'Prefer':'resolution=merge-duplicates,return=minimal'},body:JSON.stringify(data)});
-    return r.ok;
+    var res=await sb.from(table).upsert(data,{onConflict:'id'});
+    if(res.error){console.error('sbUpsert error',res.error);return false;}
+    return true;
   }catch(e){return false;}
 }
 
@@ -1237,7 +1252,7 @@ function showPinStep(user){
   document.getElementById('l-pin-error').textContent='';
   document.getElementById('l-attempts').textContent='';
   renderPinPad();
-  updatePinDots();
+  updateLoginDots();
 
   if(blocked) startBlockCountdown(user);
 }
@@ -1489,18 +1504,36 @@ async function createUser(){
   }catch(err){
     console.error('createUser error:',err);
     if(btn){btn.disabled=false;btn.innerHTML='<i class="ti ti-user-plus"></i> Crear usuario';}
-    showToast('Error de conexión con Supabase',false);
+    var msg=err&&err.message?err.message:'Error de conexión';
+    if(msg.includes('duplicate')) msg='Ese email ya está registrado';
+    showToast(msg,false);
   }
 }
 
 async function deleteUser(uid){
   var u=kriu_users_data.find(function(x){return x.id===uid;});
   if(!u) return;
-  if(!confirm('¿Eliminar a '+u.name+'? Esta acción no se puede deshacer.')) return;
-  await sbPatch('kriu_users',uid,{active:false});
-  await loadUsers();
-  openUserManager();
-  showToast('Usuario eliminado');
+  if(!confirm('¿Eliminar a '+u.name+'?\n\nSus tickets e historial se conservan.')) return;
+  try{
+    // Mark as inactive in Supabase
+    var res=await sb.from('kriu_users').update({active:false}).eq('id',uid);
+    if(res.error){
+      console.error('deleteUser error:',res.error);
+      showToast('Error al eliminar: '+res.error.message,false);
+      return;
+    }
+    // Remove locally immediately
+    kriu_users_data=kriu_users_data.filter(function(x){return x.id!==uid;});
+    EDITORS=EDITORS.filter(function(e){return e.id!==uid&&e.name!==u.name;});
+    SPECIAL=SPECIAL.filter(function(s){return s.id!==uid;});
+    ALL_PROFILES=[...SPECIAL,...EDITORS.map(function(e){return Object.assign({},e,{access:'editor'});})];
+    cm('m-usuarios');
+    setTimeout(openUserManager,50);
+    showToast('Usuario eliminado');
+  }catch(err){
+    console.error('deleteUser catch:',err);
+    showToast('Error de conexión',false);
+  }
 }
 
 function hexToBg(hex){
