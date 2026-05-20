@@ -1256,15 +1256,24 @@ function renderPinPad(){
   }).join('');
 }
 
+function updateLoginDots(cls){
+  for(var i=1;i<=4;i++){
+    var d=document.getElementById('lpd'+i);
+    if(!d) return;
+    if(cls==='error') d.className='l-pin-dot error';
+    else if(cls==='ok') d.className='l-pin-dot filled';
+    else d.className='l-pin-dot'+(i<=_pinBuf.length?' filled':'');
+  }
+}
 function lPinKey(k){
   if(_pinBuf.length>=4) return;
   _pinBuf+=k;
-  updatePinDots();
+  updateLoginDots();
   if(_pinBuf.length===4) setTimeout(checkLoginPin,150);
 }
 function lPinDel(){
   _pinBuf=_pinBuf.slice(0,-1);
-  updatePinDots();
+  updateLoginDots();
 }
 
 function checkLoginPin(){
@@ -1304,17 +1313,9 @@ function checkLoginPin(){
 }
 
 function flashDots(type){
-  for(var i=1;i<=4;i++){
-    var d=document.getElementById('lpd'+i);
-    if(d) d.className='l-pin-dot '+(type==='error'?'error':'filled');
-  }
+  updateLoginDots(type);
   if(type==='error'){
-    setTimeout(function(){
-      for(var i=1;i<=4;i++){
-        var d=document.getElementById('lpd'+i);
-        if(d) d.className='l-pin-dot';
-      }
-    },500);
+    setTimeout(function(){ updateLoginDots('reset'); },500);
   }
 }
 
@@ -1404,6 +1405,7 @@ function selColorUser(cid,hid,color){
 }
 
 async function saveUser(){
+  var btn=document.querySelector('#m-edit-user .btn-gold');
   var id=document.getElementById('meu-id').value;
   var name=(document.getElementById('meu-name').value||'').trim();
   var email=(document.getElementById('meu-email').value||'').trim().toLowerCase();
@@ -1412,25 +1414,37 @@ async function saveUser(){
   var initials=(document.getElementById('meu-initials').value||'').trim().toUpperCase();
   var color=document.getElementById('meu-color').value||'#4a9eff';
   if(!name){showToast('El nombre es obligatorio',false);return;}
-  if(!email){showToast('El email es obligatorio',false);return;}
+  if(!email||email.indexOf('@')<0){showToast('El email no es válido',false);return;}
   if(pin){
     if(pin.length!==4){showToast('El PIN debe tener 4 dígitos',false);return;}
     var isNum=true;
-    for(var ci=0;ci<pin.length;ci++){if(pin[ci]<'0'||pin[ci]>'9'){isNum=false;break;}}
+    for(var ci=0;ci<pin.length;ci++){if(pin.charCodeAt(ci)<48||pin.charCodeAt(ci)>57){isNum=false;break;}}
     if(!isNum){showToast('El PIN solo puede tener números',false);return;}
   }
+  if(btn){btn.disabled=true;btn.textContent='Guardando...';}
   var bg=hexToBg(color);
   var update={name:name,email:email,role:role,color:color,bg:bg,initials:initials||name.slice(0,2).toUpperCase()};
   if(pin) update.pin=pin;
-  var ok=await sbPatch('kriu_users',id,update);
-  if(!ok){showToast('Error al actualizar usuario',false);return;}
-  await loadUsers();
-  cm('m-edit-user');
-  openUserManager();
-  showToast('Usuario actualizado ✓');
+  try{
+    await sbPatch('kriu_users',id,update);
+    // Update locally immediately
+    var u=kriu_users_data.find(function(x){return x.id===id;});
+    if(u) Object.assign(u,update);
+    // Sync profiles
+    var ep=EDITORS.find(function(e){return e.id===id||e.name===u.name;});
+    if(ep) Object.assign(ep,{name:name,role:role,color:color,bg:bg,initials:initials||name.slice(0,2).toUpperCase()});
+    cm('m-edit-user');
+    openUserManager();
+    showToast('Usuario actualizado ✓');
+  }catch(err){
+    console.error('saveUser error:',err);
+    if(btn){btn.disabled=false;btn.innerHTML='<i class="ti ti-device-floppy"></i> Guardar';}
+    showToast('Error de conexión',false);
+  }
 }
 
 async function createUser(){
+  var btn=document.querySelector('#m-new-user .btn-gold');
   var name=(document.getElementById('mnu-name').value||'').trim();
   var email=(document.getElementById('mnu-email').value||'').trim().toLowerCase();
   var role=(document.getElementById('mnu-role').value||'').trim();
@@ -1439,24 +1453,44 @@ async function createUser(){
   var initials=(document.getElementById('mnu-initials').value||'').trim().toUpperCase();
   var color=document.getElementById('mnu-color').value||'#4a9eff';
   if(!name){showToast('El nombre es obligatorio',false);return;}
-  if(!email){showToast('El email es obligatorio',false);return;}
-  if(!pin||pin.length!==4){showToast('El PIN debe tener 4 dígitos',false);return;}
+  if(!email||email.indexOf('@')<0){showToast('El email no es válido',false);return;}
+  if(!pin||pin.length!==4){showToast('El PIN debe tener exactamente 4 dígitos',false);return;}
   var isNumeric=true;
-  for(var ci=0;ci<pin.length;ci++){if(pin[ci]<'0'||pin[ci]>'9'){isNumeric=false;break;}}
-  if(!isNumeric){showToast('El PIN solo puede tener números',false);return;}
+  for(var ci=0;ci<pin.length;ci++){if(pin.charCodeAt(ci)<48||pin.charCodeAt(ci)>57){isNumeric=false;break;}}
+  if(!isNumeric){showToast('El PIN solo puede tener números (0-9)',false);return;}
+  // Check duplicate email locally first
+  if(kriu_users_data.some(function(u){return u.email.toLowerCase()===email;})){
+    showToast('Ya existe un usuario con ese email',false);return;
+  }
+  if(btn){btn.disabled=true;btn.textContent='Guardando...';}
   var bg=hexToBg(color);
-  // Generate unique id from name
   var baseId=name.toLowerCase().replace(/[^a-z0-9]/g,'').slice(0,8)||'u';
-  var newId=baseId;
-  var counter=1;
+  var newId=baseId;var counter=1;
   while(kriu_users_data.some(function(u){return u.id===newId;})){newId=baseId+counter;counter++;}
   var userData={id:newId,name:name,email:email,pin:pin,role:role||'Colaborador',access:access,color:color,bg:bg,initials:initials||name.slice(0,2).toUpperCase(),active:true};
-  var result=await sbPost('kriu_users',userData);
-  if(!result){showToast('Error al crear usuario. Verifica que el email no esté duplicado.',false);return;}
-  await loadUsers();
-  cm('m-new-user');
-  openUserManager();
-  showToast('Usuario creado ✓');
+  try{
+    var result=await sbPost('kriu_users',userData);
+    if(!result||result.length===0){
+      if(btn){btn.disabled=false;btn.innerHTML='<i class="ti ti-user-plus"></i> Crear usuario';}
+      showToast('Error al guardar. Verifica la conexión.',false);return;
+    }
+    // Add locally immediately
+    kriu_users_data.push(userData);
+    // Sync profiles
+    if(access==='editor'){
+      EDITORS.push({name:name,role:role||'Colaborador',color:color,bg:bg,initials:initials||name.slice(0,2).toUpperCase(),id:newId,access:'editor'});
+    } else {
+      SPECIAL.push({id:newId,name:name,role:role||'Colaborador',initials:initials||name.slice(0,2).toUpperCase(),color:color,bg:bg,access:access});
+    }
+    ALL_PROFILES=[...SPECIAL,...EDITORS.map(function(e){return Object.assign({},e,{id:e.id||e.name,access:'editor'});})];
+    cm('m-new-user');
+    openUserManager();
+    showToast('Usuario creado ✓');
+  }catch(err){
+    console.error('createUser error:',err);
+    if(btn){btn.disabled=false;btn.innerHTML='<i class="ti ti-user-plus"></i> Crear usuario';}
+    showToast('Error de conexión con Supabase',false);
+  }
 }
 
 async function deleteUser(uid){
@@ -3368,14 +3402,7 @@ var PIN_MAP={'1':'ABC','2':'DEF','3':'GHI','4':'JKL','5':'MNO','6':'PQR','7':'ST
 
 
 
-function updatePinDots(){
-  for(var i=1;i<=4;i++){
-    var d=document.getElementById('dot-'+i);
-    if(d){
-      d.className='pin-dot'+(i<=_pinBuffer.length?' filled':'');
-    }
-  }
-}
+// updatePinDots removed (duplicate)
 
 
 
