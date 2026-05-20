@@ -1411,12 +1411,19 @@ async function saveUser(){
   var pin=(document.getElementById('meu-pin').value||'').trim();
   var initials=(document.getElementById('meu-initials').value||'').trim().toUpperCase();
   var color=document.getElementById('meu-color').value||'#4a9eff';
-  if(!name||!email){showToast('Nombre y email son obligatorios',false);return;}
-  if(pin&&(pin.length!==4||!/^\d+$/.test(pin))){showToast('El PIN debe ser de 4 dígitos',false);return;}
+  if(!name){showToast('El nombre es obligatorio',false);return;}
+  if(!email){showToast('El email es obligatorio',false);return;}
+  if(pin){
+    if(pin.length!==4){showToast('El PIN debe tener 4 dígitos',false);return;}
+    var isNum=true;
+    for(var ci=0;ci<pin.length;ci++){if(pin[ci]<'0'||pin[ci]>'9'){isNum=false;break;}}
+    if(!isNum){showToast('El PIN solo puede tener números',false);return;}
+  }
   var bg=hexToBg(color);
-  var update={name,email,role,color,bg,initials:initials||name.slice(0,2).toUpperCase()};
+  var update={name:name,email:email,role:role,color:color,bg:bg,initials:initials||name.slice(0,2).toUpperCase()};
   if(pin) update.pin=pin;
-  await sbPatch('kriu_users',id,update);
+  var ok=await sbPatch('kriu_users',id,update);
+  if(!ok){showToast('Error al actualizar usuario',false);return;}
   await loadUsers();
   cm('m-edit-user');
   openUserManager();
@@ -1431,11 +1438,21 @@ async function createUser(){
   var pin=(document.getElementById('mnu-pin').value||'').trim();
   var initials=(document.getElementById('mnu-initials').value||'').trim().toUpperCase();
   var color=document.getElementById('mnu-color').value||'#4a9eff';
-  if(!name||!email){showToast('Nombre y email son obligatorios',false);return;}
-  if(!pin||pin.length!==4||!/^\d+$/.test(pin)){showToast('El PIN debe ser exactamente 4 dígitos',false);return;}
+  if(!name){showToast('El nombre es obligatorio',false);return;}
+  if(!email){showToast('El email es obligatorio',false);return;}
+  if(!pin||pin.length!==4){showToast('El PIN debe tener 4 dígitos',false);return;}
+  var isNumeric=true;
+  for(var ci=0;ci<pin.length;ci++){if(pin[ci]<'0'||pin[ci]>'9'){isNumeric=false;break;}}
+  if(!isNumeric){showToast('El PIN solo puede tener números',false);return;}
   var bg=hexToBg(color);
-  var id=name.toLowerCase().replace(/[^a-z0-9]/g,'').slice(0,10)||'user'+Date.now();
-  await sbPost('kriu_users',{id,name,email,pin,role:role||'Colaborador',access,color,bg,initials:initials||name.slice(0,2).toUpperCase(),active:true});
+  // Generate unique id from name
+  var baseId=name.toLowerCase().replace(/[^a-z0-9]/g,'').slice(0,8)||'u';
+  var newId=baseId;
+  var counter=1;
+  while(kriu_users_data.some(function(u){return u.id===newId;})){newId=baseId+counter;counter++;}
+  var userData={id:newId,name:name,email:email,pin:pin,role:role||'Colaborador',access:access,color:color,bg:bg,initials:initials||name.slice(0,2).toUpperCase(),active:true};
+  var result=await sbPost('kriu_users',userData);
+  if(!result){showToast('Error al crear usuario. Verifica que el email no esté duplicado.',false);return;}
   await loadUsers();
   cm('m-new-user');
   openUserManager();
