@@ -283,6 +283,12 @@ textarea.finput{resize:vertical;min-height:80px;line-height:1.6}
 
 
 
+
+/* ── ASISTENCIA SHOOT ────────────────────────────────────── */
+.att-confirmed{background:rgba(74,222,128,.1);border:1px solid rgba(74,222,128,.25);color:var(--green);font-size:11px;padding:2px 8px;border-radius:20px;font-weight:500;display:inline-flex;align-items:center;gap:4px}
+.att-pending{background:rgba(80,80,80,.2);border:1px solid var(--b2);color:var(--t3);font-size:11px;padding:2px 8px;border-radius:20px;font-weight:500;display:inline-flex;align-items:center;gap:4px}
+.att-declined{background:rgba(248,113,113,.1);border:1px solid rgba(248,113,113,.25);color:var(--red);font-size:11px;padding:2px 8px;border-radius:20px;font-weight:500;display:inline-flex;align-items:center;gap:4px}
+
 /* ── GESTIÓN DE PROYECTOS ─────────────────────────────────── */
 .icon-picker{display:grid;grid-template-columns:repeat(6,1fr);gap:6px;margin-top:8px}
 .icon-opt{width:36px;height:36px;border-radius:8px;border:1px solid var(--b2);background:var(--bg3);display:flex;align-items:center;justify-content:center;font-size:16px;cursor:pointer;transition:all .12s}
@@ -1027,7 +1033,7 @@ async function loadData(){
 
 // Parsers: Supabase rows → app objects
 function parseTicket(r){return{id:r.id,title:r.title,desc:r.descripcion||'',assignee:r.assignee,tipo:r.tipo,prio:r.prio,due:r.due,imp:r.imp||5,notes:r.notes||'',proyecto:r.proyecto||'',categoria:r.categoria||'',status:r.status,progress:r.progress||0,created:new Date(r.created_at).getTime(),entregables:r.entregables||[],history:r.history||[]};}
-function parseShoot(r){return{id:r.id,title:r.title,desc:r.descripcion||'',date:r.date,time:r.time||'',location:r.location||'',meetPoint:r.meet_point||'',notes:r.notes||'',proyecto:r.proyecto||'',categoria:r.categoria||'',status:r.status,crew:r.crew||[],created:new Date(r.created_at).getTime(),history:r.history||[]};}
+function parseShoot(r){return{id:r.id,title:r.title,desc:r.descripcion||'',date:r.date,time:r.time||'',location:r.location||'',meetPoint:r.meet_point||'',notes:r.notes||'',proyecto:r.proyecto||'',categoria:r.categoria||'',status:r.status,crew:r.crew||[],attendance:r.attendance||{},created:new Date(r.created_at).getTime(),history:r.history||[]};}
 function parseInv(r){return{id:r.id,name:r.name,cat:r.cat,serial:r.serial||'',notes:r.notes||'',status:r.status,loans:r.loans||[],created:new Date(r.created_at).getTime()};}
 function parseNotif(r){return{id:r.id,for:r.for_users||[],type:r.type,msg:r.msg,sub:r.sub||'',time:new Date(r.created_at).getTime(),read:r.read_by||[],icon:r.icon||'ti-bell'};}
 function parseProyecto(r){return{id:r.id,nombre:r.nombre,icon:r.icon,color:r.color,bg:r.bg,desc:r.descripcion||'',categorias:r.categorias||[]};}
@@ -1043,7 +1049,7 @@ async function saveTicket(t){
   await sbUpsert('kriu_tickets',row);
 }
 async function saveShoot(s){
-  const row={id:s.id,title:s.title,descripcion:s.desc,date:s.date,time:s.time||null,location:s.location,meet_point:s.meetPoint||null,notes:s.notes,proyecto:s.proyecto||null,categoria:s.categoria||null,status:s.status,crew:s.crew,history:s.history};
+  const row={id:s.id,title:s.title,descripcion:s.desc,date:s.date,time:s.time||null,location:s.location,meet_point:s.meetPoint||null,notes:s.notes,proyecto:s.proyecto||null,categoria:s.categoria||null,status:s.status,crew:s.crew,attendance:s.attendance||{},history:s.history};
   await sbUpsert('kriu_shoots',row);
 }
 async function saveInvItem(item){
@@ -3285,42 +3291,100 @@ function openShootDetail(id){
   const s=shoots.find(x=>x.id===id);if(!s)return;
   selItem={type:'shoot',data:s};
   const canEdit=cu.access==='pm'||cu.access==='owner';
+  const isCrewMember=s.crew.some(c=>c.name===cu.name||c.name===cu.id);
   const stMap={confirmado:'b-confirmado',planeando:'b-planeando','en-curso':'b-encurso','completados':'b-completados'};
   const stLabel={confirmado:'Confirmado',planeando:'Planeando','en-curso':'En curso','completados':'Completado'};
+  if(!s.attendance) s.attendance={};
+  const myAtt=s.attendance[cu.name]||s.attendance[cu.id]||'pending';
+  const attConf=Object.values(s.attendance||{}).filter(v=>v==='confirmed').length;
+  const attDec=Object.values(s.attendance||{}).filter(v=>v==='declined').length;
+
   document.getElementById('det-title').textContent=s.title;
   document.getElementById('det-id').textContent=s.id;
-  document.getElementById('det-tabs').innerHTML=`<div class="tab active" onclick="dt(0)">Detalle</div><div class="tab" onclick="dt(1)">Equipo</div><div class="tab" onclick="dt(2)">Historial</div>`;
-  document.getElementById('det-body').innerHTML=`
-  <div id="dp0">
-    <span class="badge ${stMap[s.status]||''}" style="margin-bottom:14px;display:inline-flex">${stLabel[s.status]||s.status}</span>
-    ${s.desc?`<div style="font-size:13px;color:var(--t2);line-height:1.7;margin-bottom:14px">${s.desc}</div>`:''}
-    <div style="height:1px;background:var(--b1);margin-bottom:14px"></div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;font-size:13px">
-      <div><div style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.08em;margin-bottom:3px">Fecha y hora</div><div style="font-weight:500">${fmtDate(s.date)}${s.time?' · '+s.time:''}</div></div>
-      <div><div style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.08em;margin-bottom:3px">Ubicación</div><div style="font-weight:500">${s.location}</div></div>
-      <div><div style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.08em;margin-bottom:3px">Punto de encuentro</div><div style="font-weight:500">${s.meetPoint||'—'}</div></div>
-      <div><div style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.08em;margin-bottom:3px">Logística</div><div style="color:var(--t2)">${s.notes||'—'}</div></div>
-    </div>
-    ${canEdit?`<div style="display:flex;gap:8px;margin-top:16px;padding-top:14px;border-top:1px solid var(--b1);flex-wrap:wrap">
-      ${s.status==='planeando'?`<button class="btn btn-success btn-sm" onclick="setShootSt('confirmado')"><i class="ti ti-check"></i>Confirmar</button>`:''}
-      ${s.status==='confirmado'?`<button class="btn btn-blue btn-sm" onclick="setShootSt('en-curso')"><i class="ti ti-player-play"></i>Iniciar</button>`:''}
-      ${s.status==='en-curso'?`<button class="btn btn-ghost btn-sm" onclick="setShootSt('completados')"><i class="ti ti-flag"></i>Completar</button>`:''}
-    </div>`:''}
-  </div>
-  <div id="dp1" class="hidden">
-    <div class="section-label" style="margin-bottom:12px">Equipo · ${s.crew.length} persona${s.crew.length!==1?'s':''}</div>
-    <div style="display:flex;flex-direction:column;gap:8px">
-      ${s.crew.map(c=>`<div style="display:flex;align-items:center;gap:12px;padding:10px 12px;background:var(--bg3);border-radius:8px;border:1px solid var(--b1)">
-        <div class="pav" style="${editorStyle(c.name)};width:34px;height:34px;font-size:12px">${editorInitials(c.name)}</div>
-        <div style="flex:1"><div style="font-weight:500;font-size:13px">${c.name}</div><div style="font-size:12px;color:var(--t2)">${EDITORS.find(e=>e.name===c.name)?.role||''}</div></div>
-        <span class="badge b-aceptado">${c.role}</span>
-      </div>`).join('')}
-    </div>
-  </div>
-  <div id="dp2" class="hidden">
-    <div class="tl">${[...s.history].reverse().map((h,i)=>`<div class="tl-item"><div class="tl-dot${i===0?' gold':''}"><i class="ti ti-camera" style="font-size:11px"></i></div><div class="tl-content"><div class="tl-msg">${h.m}</div><div class="tl-time">${new Date(h.t).toLocaleString('es-MX',{day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit',second:'2-digit'})}</div></div></div>`).join('')}</div>
-  </div>`;
+  document.getElementById('det-tabs').innerHTML='<div class="tab active" onclick="dt(0)">Detalle</div><div class="tab" onclick="dt(1)">Equipo ('+s.crew.length+')</div><div class="tab" onclick="dt(2)">Historial</div>';
+
+  // Build crew rows with attendance
+  var crewRows=s.crew.map(function(c){
+    var att=s.attendance[c.name]||'pending';
+    var attBadge=att==='confirmed'?'<span class="att-confirmed"><i class="ti ti-check" style="font-size:10px"></i>Confirmado</span>':att==='declined'?'<span class="att-declined"><i class="ti ti-x" style="font-size:10px"></i>No puede</span>':'<span class="att-pending"><i class="ti ti-clock" style="font-size:10px"></i>Pendiente</span>';
+    return '<div style="display:flex;align-items:center;gap:12px;padding:12px;background:var(--bg3);border-radius:8px;border:1px solid var(--b1)">'
+      +'<div class="pav" style="'+editorStyle(c.name)+';width:34px;height:34px;font-size:12px">'+editorInitials(c.name)+'</div>'
+      +'<div style="flex:1"><div style="font-weight:500;font-size:13px">'+c.name+'</div>'
+      +'<div style="font-size:11px;color:var(--t2);margin-top:1px">'+c.role+'</div></div>'
+      +attBadge+'</div>';
+  }).join('');
+
+  // My attendance buttons (if I'm in the crew)
+  var myAttBlock='';
+  if(isCrewMember&&cu.access==='editor'){
+    myAttBlock='<div style="background:var(--bg3);border:1px solid var(--b1);border-radius:12px;padding:14px;margin-top:16px">'
+      +'<div style="font-size:12px;font-weight:500;color:var(--t2);margin-bottom:10px"><i class="ti ti-user-check" style="margin-right:5px"></i>¿Puedes asistir?</div>'
+      +'<div style="display:flex;gap:8px">'
+      +'<button class="btn btn-success'+(myAtt==='confirmed'?' btn-active':'')+'" style="flex:1'+(myAtt==='confirmed'?';opacity:1':';opacity:.7')+'" onclick="confirmShootAttendance(\x27'+s.id+'\x27,\x27confirmed\x27)">'
+      +'<i class="ti ti-check"></i>'+(myAtt==='confirmed'?'Confirmado ✓':'Confirmar asistencia')+'</button>'
+      +'<button class="btn btn-danger'+(myAtt==='declined'?' btn-active':'')+'" style="flex:1'+(myAtt==='declined'?';opacity:1':';opacity:.7')+'" onclick="confirmShootAttendance(\x27'+s.id+'\x27,\x27declined\x27)">'
+      +'<i class="ti ti-x"></i>'+(myAtt==='declined'?'No puedes ✓':'No puedo asistir')+'</button>'
+      +'</div></div>';
+  }
+
+  // Attendance summary for PM/Oscar
+  var attSummary='';
+  if(canEdit&&s.crew.length>0){
+    attSummary='<div style="display:flex;gap:10px;margin-top:12px;font-size:12px">'
+      +'<span style="color:var(--green)"><i class="ti ti-check" style="font-size:12px"></i> '+attConf+' confirmados</span>'
+      +'<span style="color:var(--red)"><i class="ti ti-x" style="font-size:12px"></i> '+attDec+' no pueden</span>'
+      +'<span style="color:var(--t3)"><i class="ti ti-clock" style="font-size:12px"></i> '+(s.crew.length-attConf-attDec)+' pendientes</span>'
+      +'</div>';
+  }
+
+  document.getElementById('det-body').innerHTML=
+    '<div id="dp0">'
+    +'<span class="badge '+(stMap[s.status]||'')+'" style="margin-bottom:14px;display:inline-flex">'+(stLabel[s.status]||s.status)+'</span>'
+    +(s.desc?'<div style="font-size:13px;color:var(--t2);line-height:1.7;margin-bottom:14px">'+s.desc+'</div>':'')
+    +'<div style="height:1px;background:var(--b1);margin-bottom:14px"></div>'
+    +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;font-size:13px">'
+    +'<div><div style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.08em;margin-bottom:3px">Fecha y hora</div><div style="font-weight:500">'+fmtDate(s.date)+(s.time?' · '+s.time:'')+'</div></div>'
+    +'<div><div style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.08em;margin-bottom:3px">Ubicación</div><div style="font-weight:500">'+s.location+'</div></div>'
+    +'<div><div style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.08em;margin-bottom:3px">Punto de encuentro</div><div style="font-weight:500">'+(s.meetPoint||'—')+'</div></div>'
+    +'<div><div style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.08em;margin-bottom:3px">Logística</div><div style="color:var(--t2)">'+(s.notes||'—')+'</div></div>'
+    +'</div>'
+    +attSummary
+    +myAttBlock
+    +(canEdit?'<div style="display:flex;gap:8px;margin-top:16px;padding-top:14px;border-top:1px solid var(--b1);flex-wrap:wrap">'
+      +(s.status==='planeando'?'<button class="btn btn-success btn-sm" onclick="setShootSt(\x27confirmado\x27)"><i class="ti ti-check"></i>Confirmar</button>':'')
+      +(s.status==='confirmado'?'<button class="btn btn-blue btn-sm" onclick="setShootSt(\x27en-curso\x27)"><i class="ti ti-player-play"></i>Iniciar</button>':'')
+      +(s.status==='en-curso'?'<button class="btn btn-ghost btn-sm" onclick="setShootSt(\x27completados\x27)"><i class="ti ti-flag"></i>Completar</button>':'')
+      +'</div>':'')
+    +'</div>'
+    +'<div id="dp1" class="hidden">'
+    +'<div style="font-size:11px;font-weight:500;color:var(--t3);text-transform:uppercase;letter-spacing:.08em;margin-bottom:12px">Equipo · '+s.crew.length+' persona'+(s.crew.length!==1?'s':'')+'</div>'
+    +'<div style="display:flex;flex-direction:column;gap:8px">'+crewRows+'</div>'
+    +'</div>'
+    +'<div id="dp2" class="hidden">'
+    +'<div class="tl">'+[...s.history].reverse().map(function(h,i){
+      return '<div class="tl-item"><div class="tl-dot'+(i===0?' gold':'')+'"><i class="ti ti-camera" style="font-size:11px"></i></div>'
+        +'<div class="tl-content"><div class="tl-msg">'+h.m+'</div>'
+        +'<div class="tl-time">'+new Date(h.t).toLocaleString('es-MX',{day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'})+'</div></div></div>';
+    }).join('')+'</div>'
+    +'</div>';
   dt(0);om('m-detail');
+}
+
+async function confirmShootAttendance(shootId, status){
+  var s=shoots.find(function(x){return x.id===shootId;});
+  if(!s) return;
+  if(!s.attendance) s.attendance={};
+  s.attendance[cu.name]=status;
+  var msg=status==='confirmed'?cu.name+' confirmó asistencia ✓':cu.name+' no puede asistir';
+  s.history.push({t:Date.now(),m:msg});
+  await saveShoot(s);
+  // Notify PM/Oscar
+  pushNotif({id:'n'+Date.now(),for:['oscar','pm'],type:'shoot',
+    msg:status==='confirmed'?'✅ '+cu.name+' confirmó asistencia':'⚠️ '+cu.name+' no puede asistir',
+    sub:s.title+' · '+fmtDate(s.date),time:Date.now(),read:[],icon:'ti-camera'},false);
+  showToast(status==='confirmed'?'Asistencia confirmada ✓':'Marcaste que no puedes asistir');
+  openShootDetail(shootId);
+  renderView();
 }
 
 function setShootSt(st){const s=selItem.data;s.status=st;const l={confirmado:'Shoot confirmado ✓','en-curso':'Shoot iniciado 🎬','completados':'Shoot completado ✓'};s.history.push({t:Date.now(),m:l[st]||st});saveShoot(s);renderView();cm('m-detail');}
