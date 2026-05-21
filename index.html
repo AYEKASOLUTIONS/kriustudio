@@ -1622,10 +1622,45 @@ function startRealtimeNotifs(){
       renderBell();
       renderNotifItems();
       showAlertPopup(notif);
+
+      // If it's a ticket notification, reload tickets from Supabase
+      if(notif.type==='ticket'){
+        reloadTickets();
+      }
     })
     .subscribe(function(status){
       if(status==='SUBSCRIBED') console.log('Realtime listo para',cu.name);
     });
+
+  // Also listen for new tickets directly
+  sb.channel('kriu_tickets_live_'+cu.id)
+    .on('postgres_changes',{
+      event:'INSERT',
+      schema:'public',
+      table:'kriu_tickets'
+    },function(payload){
+      var t=payload.new;
+      if(!t) return;
+      // Only care about tickets assigned to this user
+      var isForMe=cu.access!=='editor'||(t.assignee===cu.name||t.assignee===cu.id);
+      var alreadyHave=tickets.some(function(x){return x.id===t.id;});
+      if(alreadyHave) return;
+      var ticket=parseTicket(t);
+      tickets.unshift(ticket);
+      // Refresh view if on dashboard or tasks
+      if(view==='mi-dashboard'||view==='mis-tareas'||view==='tickets') renderView();
+      renderSidebar();
+    })
+    .subscribe();
+}
+
+async function reloadTickets(){
+  var res=await sb.from('kriu_tickets').select('*').order('created_at',{ascending:false});
+  if(!res.error&&res.data){
+    tickets=res.data.map(parseTicket);
+    if(view==='mi-dashboard'||view==='mis-tareas'||view==='tickets'||view==='dashboard') renderView();
+    renderSidebar();
+  }
 }
 
 function stopRealtimeNotifs(){
