@@ -3376,10 +3376,13 @@ function createTicket(){
   const prioLabel={Crítica:'🔴 CRÍTICA',Alta:'🟠 Alta',Media:'🟡 Media',Baja:'Baja'}[prio]||prio;
   const dueLabel=due?` · Entrega: ${new Date(due+'T12:00:00').toLocaleDateString('es-MX',{day:'numeric',month:'short',year:'numeric'})}`:' · Sin fecha';
   if(refsAsEntregables.length) tickets[0].entregables=refsAsEntregables;
-  // Popup only to assignee — PM/Oscar get panel notification only
-  pushNotif({id:'n'+Date.now(),for:[assignee],type:'ticket',msg:`Nueva tarea: ${title}`,sub:`Prioridad ${prioLabel} · Tipo: ${tipo}${dueLabel}`,time:Date.now(),read:[cu.id],icon:'🎫'},true);
-  // Silent notification to PM and Oscar (no popup)
-  pushNotif({id:'n'+(Date.now()+1),for:['oscar','pm'],type:'ticket',msg:`Ticket creado: ${title}`,sub:`Asignado a ${assignee} · ${prioLabel}`,time:Date.now(),read:[cu.id],icon:'🎫'},false);
+  // Save to Supabase FIRST
+  saveTicket(tickets[0]).then(function(){
+    // Popup only to assignee
+    pushNotif({id:'n'+Date.now(),for:[assignee],type:'ticket',msg:'Nueva tarea: '+title,sub:'Prioridad '+prioLabel+' · Tipo: '+tipo+dueLabel,time:Date.now(),read:[cu.id],icon:'ti-ticket'},true);
+    // Silent to PM and Oscar
+    pushNotif({id:'n'+(Date.now()+1),for:['oscar','pm'],type:'ticket',msg:'Ticket creado: '+title,sub:'Asignado a '+assignee+' · '+prioLabel,time:Date.now(),read:[cu.id],icon:'ti-ticket'},false);
+  });
   cm('m-ticket');['ft-title','ft-desc','ft-due','ft-notes'].forEach(i=>{const el=document.getElementById(i);if(el)el.value='';});document.getElementById('ft-assignee').value='';resetTicketForm();renderView();renderSidebar();showToast('Ticket creado y enviado');
 }
 
@@ -3406,7 +3409,7 @@ function createShoot(){
   const crewIds=crew.map(c=>c.name);
   const dateLabel=date?new Date(date+'T12:00:00').toLocaleDateString('es-MX',{day:'numeric',month:'short',year:'numeric'}):'Sin fecha';
   pushNotif({id:'n'+Date.now(),for:[...crewIds,'oscar','pm'],type:'shoot',msg:`Nuevo shoot: ${title}`,sub:`${dateLabel} · ${loc}${crew.length?' · '+crew.length+' persona'+(crew.length!==1?'s':''):''}`,time:Date.now(),read:[cu.id],icon:'ti-camera'},true);
-  saveData();cm('m-shoot');['fs-title','fs-desc','fs-date','fs-time','fs-loc','fs-meet','fs-notes'].forEach(i=>{const el=document.getElementById(i);if(el)el.value='';});renderView();renderSidebar();showToast('Shoot creado');
+  saveShoot(shoots[0]);cm('m-shoot');['fs-title','fs-desc','fs-date','fs-time','fs-loc','fs-meet','fs-notes'].forEach(i=>{const el=document.getElementById(i);if(el)el.value='';});renderView();renderSidebar();showToast('Shoot creado');
 }
 
 function createInvItem(){
