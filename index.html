@@ -1664,13 +1664,28 @@ function startRealtimeNotifs(){
     })
     .subscribe();
 
-  // Listen for new shoots
+  // Listen for new AND updated shoots
   sb.channel('kriu_shoots_live_'+cu.id)
     .on('postgres_changes',{event:'INSERT',schema:'public',table:'kriu_shoots'},function(payload){
       var s=payload.new;if(!s) return;
       var alreadyHave=shoots.some(function(x){return x.id===s.id;});
       if(alreadyHave) return;
       shoots.unshift(parseShoot(s));
+      var refreshViews=['shoots','mis-shoots','dashboard'];
+      if(refreshViews.indexOf(view)>=0) renderView();
+      renderSidebar();
+    })
+    .on('postgres_changes',{event:'UPDATE',schema:'public',table:'kriu_shoots'},function(payload){
+      var s=payload.new;if(!s) return;
+      var idx=shoots.findIndex(function(x){return x.id===s.id;});
+      var updated=parseShoot(s);
+      if(idx>=0) shoots[idx]=updated;
+      else shoots.unshift(updated);
+      // If detail modal is open for this shoot, refresh it
+      if(selItem&&selItem.type==='shoot'&&selItem.data&&selItem.data.id===s.id){
+        selItem.data=updated;
+        openShootDetail(s.id);
+      }
       var refreshViews=['shoots','mis-shoots','dashboard'];
       if(refreshViews.indexOf(view)>=0) renderView();
       renderSidebar();
@@ -3291,7 +3306,7 @@ function openShootDetail(id){
   const s=shoots.find(x=>x.id===id);if(!s)return;
   selItem={type:'shoot',data:s};
   const canEdit=cu.access==='pm'||cu.access==='owner';
-  const isCrewMember=s.crew.some(c=>c.name===cu.name||c.name===cu.id);
+  const isCrewMember=cu.access==='editor'&&s.crew.some(c=>c.name===cu.name||c.name===cu.id||c.name===cu.initials);
   const stMap={confirmado:'b-confirmado',planeando:'b-planeando','en-curso':'b-encurso','completados':'b-completados'};
   const stLabel={confirmado:'Confirmado',planeando:'Planeando','en-curso':'En curso','completados':'Completado'};
   if(!s.attendance) s.attendance={};
@@ -3374,17 +3389,19 @@ async function confirmShootAttendance(shootId, status){
   var s=shoots.find(function(x){return x.id===shootId;});
   if(!s) return;
   if(!s.attendance) s.attendance={};
+  // Use cu.name as key — consistent identifier
   s.attendance[cu.name]=status;
   var msg=status==='confirmed'?cu.name+' confirmó asistencia ✓':cu.name+' no puede asistir';
-  s.history.push({t:Date.now(),m:msg});
+  s.history.push({t:Date.now(),m:msg+' · '+new Date().toLocaleTimeString('es-MX',{hour:'2-digit',minute:'2-digit'})});
   await saveShoot(s);
-  // Notify PM/Oscar
+  // Notify PM/Oscar silently
   pushNotif({id:'n'+Date.now(),for:['oscar','pm'],type:'shoot',
-    msg:status==='confirmed'?'✅ '+cu.name+' confirmó asistencia':'⚠️ '+cu.name+' no puede asistir',
-    sub:s.title+' · '+fmtDate(s.date),time:Date.now(),read:[],icon:'ti-camera'},false);
+    msg:(status==='confirmed'?'✅ ':'⚠️ ')+cu.name+(status==='confirmed'?' confirmó asistencia':' no puede asistir'),
+    sub:s.title+' · '+fmtDate(s.date),time:Date.now(),read:[cu.id,cu.name],icon:'ti-camera'},false);
   showToast(status==='confirmed'?'Asistencia confirmada ✓':'Marcaste que no puedes asistir');
+  // Reopen to refresh UI
   openShootDetail(shootId);
-  renderView();
+  if(view==='shoots'||view==='mis-shoots'||view==='dashboard') renderView();
 }
 
 function setShootSt(st){const s=selItem.data;s.status=st;const l={confirmado:'Shoot confirmado ✓','en-curso':'Shoot iniciado 🎬','completados':'Shoot completado ✓'};s.history.push({t:Date.now(),m:l[st]||st});saveShoot(s);renderView();cm('m-detail');}
