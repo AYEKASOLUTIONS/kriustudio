@@ -1595,8 +1595,10 @@ function startRealtimeNotifs(){
   }
   if(!cu) return;
 
-  // Record login time — only show notifications created AFTER this moment
-  var loginTime=new Date().toISOString();
+  // Snapshot of existing notification IDs at login time
+  // Any ID already in this set = old notification, skip popup
+  var existingIds={};
+  notifs.forEach(function(n){ existingIds[n.id]=true; });
 
   _realtimeChannel=sb.channel('kriu_notifs_live_'+cu.id)
     .on('postgres_changes',{
@@ -1607,10 +1609,8 @@ function startRealtimeNotifs(){
       var n=payload.new;
       if(!n) return;
 
-      // Only process notifications created after login
-      var notifTime=new Date(n.created_at);
-      var loginTs=new Date(loginTime);
-      if(notifTime<loginTs) return;
+      // If this ID existed before login — skip popup entirely
+      if(existingIds[n.id]) return;
 
       var notif={
         id:n.id,
@@ -1618,24 +1618,24 @@ function startRealtimeNotifs(){
         type:n.type,
         msg:n.msg,
         sub:n.sub||'',
-        time:notifTime.getTime(),
+        time:new Date(n.created_at).getTime(),
         read:n.read_by||[],
         icon:n.icon||'ti-bell'
       };
 
-      // Only for this user and not already in list
       var isForMe=notif.for.includes(cu.id)||notif.for.includes(cu.name);
       var alreadyHave=notifs.some(function(x){return x.id===notif.id;});
       if(!isForMe||alreadyHave) return;
 
-      // Add and show popup
+      // New notification — add and show popup
+      existingIds[n.id]=true;
       notifs.unshift(notif);
       renderBell();
       renderNotifItems();
       showAlertPopup(notif);
     })
     .subscribe(function(status){
-      if(status==='SUBSCRIBED') console.log('Realtime conectado para',cu.name);
+      if(status==='SUBSCRIBED') console.log('Realtime listo para',cu.name);
     });
 }
 
