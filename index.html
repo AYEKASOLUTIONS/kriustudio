@@ -573,7 +573,7 @@ textarea.finput{resize:vertical;min-height:80px;line-height:1.6}
         Cuenta bloqueada por <span id="l-countdown">60</span>s
       </div>
       <div class="l-pin-pad" id="l-pin-pad"></div>
-      <button class="l-btn-ghost" onclick="backToEmail()"><i class="ti ti-arrow-left" style="margin-right:5px"></i>Cambiar correo</button>
+      <button class="l-btn-ghost" onclick="backToEmail()"><i class="ti ti-logout" style="margin-right:5px"></i>Cerrar sesión</button>
     </div>
   </div>
 </div>
@@ -610,7 +610,7 @@ textarea.finput{resize:vertical;min-height:80px;line-height:1.6}
           <div>
             <div class="suser-name" id="su-name"></div>
             <div class="suser-role" id="su-role"></div>
-            <span class="slogout" onclick="logout()">Cambiar perfil</span>
+            <span class="slogout" onclick="logout()"><i class="ti ti-logout" style="font-size:12px;margin-right:4px"></i>Cerrar sesión</span>
           </div>
         </div>
       </div>
@@ -948,20 +948,26 @@ const sb=supabase.createClient(SB_URL,SB_KEY);
 async function sbGet(table, query=''){
   try{
     var q=sb.from(table).select('*');
-    // Parse simple query params
-    var params=new URLSearchParams(query);
-    params.forEach(function(val,key){
-      if(key==='order'){
-        var parts=val.split('.');
-        q=q.order(parts[0],{ascending:parts[1]!=='desc'});
-      } else if(key==='limit'){
-        q=q.limit(parseInt(val));
-      }
-    });
+    if(query){
+      var params=new URLSearchParams(query);
+      params.forEach(function(val,key){
+        if(key==='order'){
+          var parts=val.split('.');
+          q=q.order(parts[0],{ascending:parts[1]!=='desc'});
+        } else if(key==='limit'){
+          q=q.limit(parseInt(val));
+        } else if(key==='active'){
+          q=q.eq('active',val==='eq.true'||val==='true');
+        }
+      });
+    }
     var res=await q;
-    if(res.error){console.error('sbGet error',res.error);return null;}
+    if(res.error){
+      console.error('sbGet error on '+table+':',res.error.message||JSON.stringify(res.error));
+      return null;
+    }
     return res.data;
-  }catch(e){console.error('sbGet catch',e);return null;}
+  }catch(e){console.error('sbGet catch on '+table+':',e.message||e);return null;}
 }
 async function sbPost(table, data){
   try{
@@ -995,13 +1001,18 @@ async function sbUpsert(table, data){
 // ── DATA LAYER ─────────────────────────────────────────────
 async function loadData(){
   try{
-    const [t,s,inv,n,p]=await Promise.all([
-      sbGet('kriu_tickets','order=created_at.desc'),
-      sbGet('kriu_shoots','order=created_at.desc'),
-      sbGet('kriu_inventory','order=created_at.desc'),
-      sbGet('kriu_notifs','order=created_at.desc&limit=50'),
-      sbGet('kriu_proyectos','order=sort_order.asc'),
+    const [tr,sr,invr,nr,pr]=await Promise.all([
+      sb.from('kriu_tickets').select('*').order('created_at',{ascending:false}),
+      sb.from('kriu_shoots').select('*').order('created_at',{ascending:false}),
+      sb.from('kriu_inventory').select('*').order('created_at',{ascending:false}),
+      sb.from('kriu_notifs').select('*').order('created_at',{ascending:false}).limit(50),
+      sb.from('kriu_proyectos').select('*').order('sort_order',{ascending:true}),
     ]);
+    const t=tr.error?(console.error('tickets:',tr.error.message),null):tr.data;
+    const s=sr.error?(console.error('shoots:',sr.error.message),null):sr.data;
+    const inv=invr.error?(console.error('inventory:',invr.error.message),null):invr.data;
+    const n=nr.error?(console.error('notifs:',nr.error.message),null):nr.data;
+    const p=pr.error?(console.error('proyectos:',pr.error.message),null):pr.data;
     if(t&&t.length) tickets=t.map(parseTicket);
     if(s&&s.length) shoots=s.map(parseShoot);
     if(inv&&inv.length) inventory=inv.map(parseInv);
@@ -1107,7 +1118,7 @@ function editorInitials(name){const e=EDITORS.find(x=>x.name===name);return e?e.
 // ══ NOTIFICACIONES ════════════════════════════════════════
 function pushNotif(n,showPopup=false){
   notifs.unshift(n);saveNotif(n);renderBell();renderNotifItems();
-  if(showPopup&&cu&&n.for.includes(cu.id)) showAlertPopup(n);
+  if(showPopup&&cu&&(n.for.includes(cu.id)||n.for.includes(cu.name))) showAlertPopup(n);
 }
 
 let alertQueue=[];
@@ -1188,7 +1199,8 @@ var PIN_LETTERS={'2':'ABC','3':'DEF','4':'GHI','5':'JKL','6':'MNO','7':'PQR','8'
 var kriu_users_data=[];
 
 async function loadUsers(){
-  var r=await sbGet('kriu_users','active=eq.true&order=created_at.asc');
+  var r=await sb.from('kriu_users').select('*').eq('active',true).order('created_at',{ascending:true});
+    r=r.error?null:r.data;
   if(r&&r.length){
     kriu_users_data=r;
     // Sync EDITORS and SPECIAL from Supabase users
@@ -3268,7 +3280,10 @@ function createTicket(){
   const prioLabel={Crítica:'🔴 CRÍTICA',Alta:'🟠 Alta',Media:'🟡 Media',Baja:'Baja'}[prio]||prio;
   const dueLabel=due?` · Entrega: ${new Date(due+'T12:00:00').toLocaleDateString('es-MX',{day:'numeric',month:'short',year:'numeric'})}`:' · Sin fecha';
   if(refsAsEntregables.length) tickets[0].entregables=refsAsEntregables;
-  pushNotif({id:'n'+Date.now(),for:[assignee,'oscar','pm'],type:'ticket',msg:`Nueva tarea: ${title}`,sub:`Prioridad ${prioLabel} · Tipo: ${tipo}${dueLabel}`,time:Date.now(),read:[cu.id],icon:'🎫'},true);
+  // Popup only to assignee — PM/Oscar get panel notification only
+  pushNotif({id:'n'+Date.now(),for:[assignee],type:'ticket',msg:`Nueva tarea: ${title}`,sub:`Prioridad ${prioLabel} · Tipo: ${tipo}${dueLabel}`,time:Date.now(),read:[cu.id],icon:'🎫'},true);
+  // Silent notification to PM and Oscar (no popup)
+  pushNotif({id:'n'+(Date.now()+1),for:['oscar','pm'],type:'ticket',msg:`Ticket creado: ${title}`,sub:`Asignado a ${assignee} · ${prioLabel}`,time:Date.now(),read:[cu.id],icon:'🎫'},false);
   cm('m-ticket');['ft-title','ft-desc','ft-due','ft-notes'].forEach(i=>{const el=document.getElementById(i);if(el)el.value='';});document.getElementById('ft-assignee').value='';resetTicketForm();renderView();renderSidebar();showToast('Ticket creado y enviado');
 }
 
