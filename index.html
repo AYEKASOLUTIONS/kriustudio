@@ -1632,24 +1632,52 @@ function startRealtimeNotifs(){
       if(status==='SUBSCRIBED') console.log('Realtime listo para',cu.name);
     });
 
-  // Also listen for new tickets directly
+  // Listen for new tickets
   sb.channel('kriu_tickets_live_'+cu.id)
-    .on('postgres_changes',{
-      event:'INSERT',
-      schema:'public',
-      table:'kriu_tickets'
-    },function(payload){
-      var t=payload.new;
-      if(!t) return;
-      // Only care about tickets assigned to this user
-      var isForMe=cu.access!=='editor'||(t.assignee===cu.name||t.assignee===cu.id);
+    .on('postgres_changes',{event:'INSERT',schema:'public',table:'kriu_tickets'},function(payload){
+      var t=payload.new;if(!t) return;
       var alreadyHave=tickets.some(function(x){return x.id===t.id;});
       if(alreadyHave) return;
-      var ticket=parseTicket(t);
-      tickets.unshift(ticket);
-      // Refresh view if on dashboard or tasks
-      if(view==='mi-dashboard'||view==='mis-tareas'||view==='tickets') renderView();
+      tickets.unshift(parseTicket(t));
+      var refreshViews=['mi-dashboard','mis-tareas','tickets','dashboard'];
+      if(refreshViews.indexOf(view)>=0) renderView();
       renderSidebar();
+    })
+    .subscribe();
+
+  // Listen for ticket UPDATES (progress, status changes)
+  sb.channel('kriu_tickets_update_'+cu.id)
+    .on('postgres_changes',{event:'UPDATE',schema:'public',table:'kriu_tickets'},function(payload){
+      var t=payload.new;if(!t) return;
+      var idx=tickets.findIndex(function(x){return x.id===t.id;});
+      if(idx>=0) tickets[idx]=parseTicket(t);
+      else tickets.unshift(parseTicket(t));
+      var refreshViews=['mi-dashboard','mis-tareas','tickets','dashboard','revision'];
+      if(refreshViews.indexOf(view)>=0) renderView();
+      renderSidebar();
+    })
+    .subscribe();
+
+  // Listen for new shoots
+  sb.channel('kriu_shoots_live_'+cu.id)
+    .on('postgres_changes',{event:'INSERT',schema:'public',table:'kriu_shoots'},function(payload){
+      var s=payload.new;if(!s) return;
+      var alreadyHave=shoots.some(function(x){return x.id===s.id;});
+      if(alreadyHave) return;
+      shoots.unshift(parseShoot(s));
+      var refreshViews=['shoots','mis-shoots','dashboard'];
+      if(refreshViews.indexOf(view)>=0) renderView();
+      renderSidebar();
+    })
+    .subscribe();
+
+  // Listen for inventory changes
+  sb.channel('kriu_inventory_live_'+cu.id)
+    .on('postgres_changes',{event:'UPDATE',schema:'public',table:'kriu_inventory'},function(payload){
+      var item=payload.new;if(!item) return;
+      var idx=inventory.findIndex(function(x){return x.id===item.id;});
+      if(idx>=0) inventory[idx]=parseInv(item);
+      if(view==='inventario') renderView();
     })
     .subscribe();
 }
@@ -1658,7 +1686,8 @@ async function reloadTickets(){
   var res=await sb.from('kriu_tickets').select('*').order('created_at',{ascending:false});
   if(!res.error&&res.data){
     tickets=res.data.map(parseTicket);
-    if(view==='mi-dashboard'||view==='mis-tareas'||view==='tickets'||view==='dashboard') renderView();
+    var refreshViews=['mi-dashboard','mis-tareas','tickets','dashboard'];
+    if(refreshViews.indexOf(view)>=0) renderView();
     renderSidebar();
   }
 }
@@ -3408,7 +3437,10 @@ function createShoot(){
   shoots.unshift({id,title,desc:document.getElementById('fs-desc').value.trim(),date,time:document.getElementById('fs-time').value,location:loc,meetPoint:document.getElementById('fs-meet').value.trim(),notes:document.getElementById('fs-notes').value.trim(),proyecto:sproyecto,categoria:scategoria,status:'planeando',crew,created:Date.now(),history:[{t:Date.now(),m:`Shoot creado por ${cu.name}`}]});
   const crewIds=crew.map(c=>c.name);
   const dateLabel=date?new Date(date+'T12:00:00').toLocaleDateString('es-MX',{day:'numeric',month:'short',year:'numeric'}):'Sin fecha';
-  pushNotif({id:'n'+Date.now(),for:[...crewIds,'oscar','pm'],type:'shoot',msg:`Nuevo shoot: ${title}`,sub:`${dateLabel} · ${loc}${crew.length?' · '+crew.length+' persona'+(crew.length!==1?'s':''):''}`,time:Date.now(),read:[cu.id],icon:'ti-camera'},true);
+  // Popup only to crew members
+  pushNotif({id:'n'+Date.now(),for:crewIds,type:'shoot',msg:'Nuevo shoot: '+title,sub:dateLabel+' · '+loc+(crew.length?' · '+crew.length+' persona'+(crew.length!==1?'s':''):''),time:Date.now(),read:[cu.id],icon:'ti-camera'},true);
+  // Silent to PM and Oscar
+  pushNotif({id:'n'+(Date.now()+1),for:['oscar','pm'],type:'shoot',msg:'Shoot creado: '+title,sub:dateLabel+' · '+loc,time:Date.now(),read:[cu.id],icon:'ti-camera'},false);
   saveShoot(shoots[0]);cm('m-shoot');['fs-title','fs-desc','fs-date','fs-time','fs-loc','fs-meet','fs-notes'].forEach(i=>{const el=document.getElementById(i);if(el)el.value='';});renderView();renderSidebar();showToast('Shoot creado');
 }
 
