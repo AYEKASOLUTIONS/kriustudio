@@ -1570,20 +1570,9 @@ function login(id){
   renderView();
   aiSessionStart=false;
   aiMsgs=[];
-  // Show popup for unread notifications on login
-  setTimeout(function(){
-    var unread=notifs.filter(function(n){
-      return (n.for.includes(cu.id)||n.for.includes(cu.name))&&!n.read.includes(cu.id)&&!n.read.includes(cu.name);
-    });
-    if(unread.length>0){
-      alertQueue=unread.slice(0,3);
-      alertShowing=false;
-      processAlertQueue();
-    }
-  },800);
-
-  // Start Realtime listener for live notifications
-  startRealtimeNotifs();
+  // Start Realtime listener — only NEW notifications after this point get popups
+  // Unread old ones show in the bell panel but no popup
+  setTimeout(startRealtimeNotifs, 500);
 }
 
 var _realtimeChannel=null;
