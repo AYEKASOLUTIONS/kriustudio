@@ -1576,15 +1576,71 @@ function login(id){
       return (n.for.includes(cu.id)||n.for.includes(cu.name))&&!n.read.includes(cu.id)&&!n.read.includes(cu.name);
     });
     if(unread.length>0){
-      // Queue them all
-      alertQueue=unread.slice(0,3); // max 3 on login
+      alertQueue=unread.slice(0,3);
       alertShowing=false;
       processAlertQueue();
     }
   },800);
+
+  // Start Realtime listener for live notifications
+  startRealtimeNotifs();
+}
+
+var _realtimeChannel=null;
+
+function startRealtimeNotifs(){
+  // Unsubscribe previous channel if exists
+  if(_realtimeChannel){
+    sb.removeChannel(_realtimeChannel);
+    _realtimeChannel=null;
+  }
+  if(!cu) return;
+
+  _realtimeChannel=sb.channel('kriu_notifs_live')
+    .on('postgres_changes',{
+      event:'INSERT',
+      schema:'public',
+      table:'kriu_notifs'
+    },function(payload){
+      var n=payload.new;
+      if(!n) return;
+      // Parse the notification
+      var notif={
+        id:n.id,
+        for:n.for_users||[],
+        type:n.type,
+        msg:n.msg,
+        sub:n.sub||'',
+        time:new Date(n.created_at).getTime(),
+        read:n.read_by||[],
+        icon:n.icon||'ti-bell'
+      };
+      // Check if it's for this user
+      var isForMe=notif.for.includes(cu.id)||notif.for.includes(cu.name);
+      var alreadyHave=notifs.some(function(x){return x.id===notif.id;});
+      if(!isForMe||alreadyHave) return;
+
+      // Add to local list and show popup
+      notifs.unshift(notif);
+      renderBell();
+      renderNotifItems();
+      // Show popup immediately — user is already logged in
+      showAlertPopup(notif);
+    })
+    .subscribe(function(status){
+      console.log('Realtime notifs:', status);
+    });
+}
+
+function stopRealtimeNotifs(){
+  if(_realtimeChannel){
+    sb.removeChannel(_realtimeChannel);
+    _realtimeChannel=null;
+  }
 }
 
 function logout(){
+  stopRealtimeNotifs();
   cu=null;
   document.getElementById('login').style.display='flex';
   document.getElementById('app').style.display='none';
