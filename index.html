@@ -1589,14 +1589,16 @@ function login(id){
 var _realtimeChannel=null;
 
 function startRealtimeNotifs(){
-  // Unsubscribe previous channel if exists
   if(_realtimeChannel){
     sb.removeChannel(_realtimeChannel);
     _realtimeChannel=null;
   }
   if(!cu) return;
 
-  _realtimeChannel=sb.channel('kriu_notifs_live')
+  // Record login time — only show notifications created AFTER this moment
+  var loginTime=new Date().toISOString();
+
+  _realtimeChannel=sb.channel('kriu_notifs_live_'+cu.id)
     .on('postgres_changes',{
       event:'INSERT',
       schema:'public',
@@ -1604,31 +1606,36 @@ function startRealtimeNotifs(){
     },function(payload){
       var n=payload.new;
       if(!n) return;
-      // Parse the notification
+
+      // Only process notifications created after login
+      var notifTime=new Date(n.created_at);
+      var loginTs=new Date(loginTime);
+      if(notifTime<loginTs) return;
+
       var notif={
         id:n.id,
         for:n.for_users||[],
         type:n.type,
         msg:n.msg,
         sub:n.sub||'',
-        time:new Date(n.created_at).getTime(),
+        time:notifTime.getTime(),
         read:n.read_by||[],
         icon:n.icon||'ti-bell'
       };
-      // Check if it's for this user
+
+      // Only for this user and not already in list
       var isForMe=notif.for.includes(cu.id)||notif.for.includes(cu.name);
       var alreadyHave=notifs.some(function(x){return x.id===notif.id;});
       if(!isForMe||alreadyHave) return;
 
-      // Add to local list and show popup
+      // Add and show popup
       notifs.unshift(notif);
       renderBell();
       renderNotifItems();
-      // Show popup immediately — user is already logged in
       showAlertPopup(notif);
     })
     .subscribe(function(status){
-      console.log('Realtime notifs:', status);
+      if(status==='SUBSCRIBED') console.log('Realtime conectado para',cu.name);
     });
 }
 
